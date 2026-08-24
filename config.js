@@ -9,7 +9,7 @@ const DB_URL = "https://daeyoung-band-default-rtdb.firebaseio.com";
 // ⚠ 이건 서버 검증이 아니라 클라이언트에서 문자열 비교하는 수준의 UI 잠금임.
 //    RTDB 규칙 자체는 열려있으므로, 마음먹으면 개발자도구로 우회 가능한 구조.
 //    20명 신뢰 그룹 기준으로 채택한 트레이드오프.
-const ADMIN_KEY = "daeyoung2026";
+const ADMIN_KEY = "daeyoung12";
 
 // ICS(구글/애플 캘린더 구독) 피드 URL — GAS 배포 후 이 값 채우기
 const ICS_FEED_URL = ""; // 예: "https://script.google.com/macros/s/AKfycbw3T8ykStmFt_Ch789KxqxHWqL1QK8qI1WavF75TBf8e2TKctEFbhwbfQuahhqA2jDkCg/exec"
