@@ -116,6 +116,11 @@ async function sha256Hex(text){
 }
 
 function isAdmin(){ return localStorage.getItem('bp_admin') === 'true'; }
+function logoutAdmin(){
+  localStorage.removeItem('bp_admin');
+  toast('관리자 모드 해제됨');
+  render();
+}
 function openAdminPrompt(){
   showModal(`
     <div class="modal-title">관리자 인증</div>
@@ -130,6 +135,23 @@ function openAdminPrompt(){
       closeModal(); toast('관리자로 전환됨'); render();
     } else {
       toast('키가 맞지 않아');
+    }
+  });
+}
+// 관리자 배지 — 모든 뷰에서 공통으로 쓰는 로그인/로그아웃 토글 버튼
+function adminBadgeHtml(){
+  return isAdmin()
+    ? `<button class="btn btn-ghost btn-sm" id="adminBtn">🔓 로그아웃</button>`
+    : `<button class="btn btn-ghost btn-sm" id="adminBtn">🔒 관리자</button>`;
+}
+function bindAdminBadge(){
+  const btn = document.getElementById('adminBtn');
+  if(!btn) return;
+  btn.addEventListener('click', ()=>{
+    if(isAdmin()){
+      if(confirm('관리자 모드를 해제할까?')) logoutAdmin();
+    } else {
+      openAdminPrompt();
     }
   });
 }
@@ -257,7 +279,7 @@ function eventCard(id, e, me){
 let CAL_CURSOR = new Date(); // 현재 보고 있는 달
 
 function getMonthMatrix(year, month){
-  // month: 0-based. 월요일 시작 6주 그리드.
+  // month: 0-based. 월요일 시작, 토/일 제외 5일 그리드.
   const first = new Date(year, month, 1);
   const startOffset = (first.getDay()+6)%7; // 월=0
   const gridStart = new Date(year, month, 1-startOffset);
@@ -265,10 +287,11 @@ function getMonthMatrix(year, month){
   let cursor = new Date(gridStart);
   for(let w=0; w<6; w++){
     const week = [];
-    for(let d=0; d<7; d++){
+    for(let d=0; d<5; d++){
       week.push(new Date(cursor));
       cursor.setDate(cursor.getDate()+1);
     }
+    cursor.setDate(cursor.getDate()+2); // 토, 일 건너뛰기
     weeks.push(week);
   }
   return weeks;
@@ -276,6 +299,7 @@ function getMonthMatrix(year, month){
 
 function renderCalendar(){
   const view = document.getElementById('view');
+  const admin = isAdmin();
   const year = CAL_CURSOR.getFullYear(), month = CAL_CURSOR.getMonth();
   const weeks = getMonthMatrix(year, month);
   const today = todayISO();
@@ -286,16 +310,18 @@ function renderCalendar(){
   });
 
   view.innerHTML = `
+    <div class="section-title">달력 ${adminBadgeHtml()}</div>
     <div class="month-nav">
       <button type="button" id="prevMonth">‹</button>
       <div class="month-label">${year}년 ${month+1}월</div>
       <button type="button" id="nextMonth">›</button>
     </div>
     <div class="cal-grid" id="calGrid">
-      ${WEEKDAYS.map(w=>`<div class="cal-weekday">${w}</div>`).join('')}
+      ${WEEKDAYS.slice(0,5).map(w=>`<div class="cal-weekday">${w}</div>`).join('')}
     </div>
     <div class="legend" id="calLegend"></div>
   `;
+  bindAdminBadge();
   const grid = document.getElementById('calGrid');
   weeks.forEach(week=>{
     week.forEach(d=>{
@@ -336,7 +362,6 @@ function renderCalendar(){
 
 function openDayDetail(iso, dayEvents, school){
   const me = getIdentity();
-  const admin = isAdmin();
   showModal(`
     <div class="modal-title">${formatDateLabel(iso)}</div>
     <div id="schoolCalBox"></div>
@@ -347,14 +372,10 @@ function openDayDetail(iso, dayEvents, school){
   function renderSchoolCalBox(){
     const box = document.getElementById('schoolCalBox');
     const cur = STATE.schoolCalendar[iso];
-    if(!admin){
-      box.innerHTML = cur ? `<div class="note-line">${escapeHtml(CAL_TYPE_LABEL[cur.type]||'학사일정')}: ${escapeHtml(cur.label)}</div>` : '';
-      return;
-    }
     if(cur){
       box.innerHTML = `
-        <div class="note-line" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-          <span>${escapeHtml(CAL_TYPE_LABEL[cur.type]||'학사일정')}: ${escapeHtml(cur.label)}</span>
+        <div class="school-cal-row">
+          <span class="note-line" style="margin:0; flex:1;">${escapeHtml(CAL_TYPE_LABEL[cur.type]||'학사일정')}: ${escapeHtml(cur.label)}</span>
           <button class="btn btn-danger btn-sm" id="schoolCalDel">삭제</button>
         </div>
       `;
@@ -366,12 +387,12 @@ function openDayDetail(iso, dayEvents, school){
       });
     } else {
       box.innerHTML = `
-        <div class="field" style="display:flex; gap:8px; align-items:flex-end;">
-          <div style="flex:1;">
-            <label>학사일정 추가</label>
-            <input type="text" id="schoolCalLabel" placeholder="예: 재량휴업일">
-          </div>
-          <select id="schoolCalType" style="width:110px;">
+        <div class="field">
+          <label>학사일정 추가 (누구나 입력 가능)</label>
+          <input type="text" id="schoolCalLabel" placeholder="예: 재량휴업일">
+        </div>
+        <div class="school-cal-row">
+          <select id="schoolCalType">
             <option value="holiday">휴일</option>
             <option value="exam">시험</option>
             <option value="discretionary">재량</option>
@@ -415,9 +436,7 @@ function renderSchedule(){
   list.sort((a,b) => b[1].date.localeCompare(a[1].date)); // 최신순(내림차순)
 
   view.innerHTML = `
-    <div class="section-title">일정 관리
-      ${admin ? '' : `<button class="btn btn-ghost btn-sm" id="adminBtn">🔒 관리자</button>`}
-    </div>
+    <div class="section-title">일정 관리 ${adminBadgeHtml()}</div>
     ${admin ? '' : `<div class="admin-lock">일정 추가/삭제는 관리자만 가능해. 참석 체크는 홈/달력에서 본인 이름으로 바로 가능함.</div>`}
     <div class="pill-row" id="monthPills">
       <button type="button" class="filter-pill ${SCHEDULE_MONTH_FILTER==='all'?'active':''}" data-month="all">전체</button>
@@ -429,9 +448,7 @@ function renderSchedule(){
     <div id="scheduleList"></div>
     ${list.length===0 ? '<div class="empty-state">해당 월에는 일정이 없어</div>' : ''}
   `;
-  if(!admin){
-    document.getElementById('adminBtn').addEventListener('click', openAdminPrompt);
-  }
+  bindAdminBadge();
   document.querySelectorAll('#monthPills .filter-pill').forEach(btn=>{
     btn.addEventListener('click', ()=>{ SCHEDULE_MONTH_FILTER = btn.dataset.month; renderSchedule(); });
   });
@@ -552,16 +569,14 @@ function renderReference(){
   const view = document.getElementById('view');
   const admin = isAdmin();
   view.innerHTML = `
-    <div class="section-title">자료실
-      ${admin ? '' : `<button class="btn btn-ghost btn-sm" id="adminBtn">🔒 관리자</button>`}
-    </div>
+    <div class="section-title">자료실 ${adminBadgeHtml()}</div>
     <div class="pill-row">
       <button type="button" class="filter-pill ${REFERENCE_TAB==='songs'?'active':''}" data-tab="songs">🎵 곡별 파트배정</button>
       <button type="button" class="filter-pill ${REFERENCE_TAB==='room'?'active':''}" data-tab="room">🚪 밴드부실 사용</button>
     </div>
     <div id="referenceBody"></div>
   `;
-  if(!admin) document.getElementById('adminBtn').addEventListener('click', openAdminPrompt);
+  bindAdminBadge();
   view.querySelectorAll('.pill-row .filter-pill').forEach(btn=>{
     btn.addEventListener('click', ()=>{ REFERENCE_TAB = btn.dataset.tab; renderReference(); });
   });
@@ -695,14 +710,12 @@ function renderMembers(){
   const view = document.getElementById('view');
   const admin = isAdmin();
   view.innerHTML = `
-    <div class="section-title">참여자
-      ${admin ? '' : `<button class="btn btn-ghost btn-sm" id="adminBtn">🔒 관리자</button>`}
-    </div>
+    <div class="section-title">참여자 ${adminBadgeHtml()}</div>
     <div class="section-sub">고정 불가 시간은 1학기 기준으로 마이그레이션된 값이야. 2학기 값으로 갱신이 필요하면 관리자 모드에서 수정해줘.</div>
     <div id="memberList"></div>
     ${admin ? `<button class="btn btn-accent btn-block" id="addMemberBtn" style="margin-top:8px;">+ 참여자 추가</button>` : ''}
   `;
-  if(!admin) document.getElementById('adminBtn').addEventListener('click', openAdminPrompt);
+  bindAdminBadge();
 
   const list = document.getElementById('memberList');
   Object.entries(STATE.members).sort((a,b)=>a[0].localeCompare(b[0],'ko')).forEach(([name, m])=>{
