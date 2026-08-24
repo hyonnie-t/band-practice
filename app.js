@@ -110,6 +110,11 @@ function openIdentityModal(){
 }
 
 // ---------------- 관리자 ----------------
+async function sha256Hex(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
 function isAdmin(){ return localStorage.getItem('bp_admin') === 'true'; }
 function openAdminPrompt(){
   showModal(`
@@ -117,9 +122,10 @@ function openAdminPrompt(){
     <div class="field"><input type="password" id="adminKeyInput" placeholder="관리자 키 입력"></div>
     <button class="btn btn-primary btn-block" id="adminSubmit">확인</button>
   `);
-  document.getElementById('adminSubmit').addEventListener('click', ()=>{
+  document.getElementById('adminSubmit').addEventListener('click', async ()=>{
     const v = document.getElementById('adminKeyInput').value;
-    if(v === ADMIN_KEY){
+    const hash = await sha256Hex(v);
+    if(hash === ADMIN_KEY_HASH){
       localStorage.setItem('bp_admin','true');
       closeModal(); toast('관리자로 전환됨'); render();
     } else {
@@ -143,9 +149,8 @@ const ROUTES = {
   home: renderHome,
   calendar: renderCalendar,
   schedule: renderSchedule,
-  songs: renderSongsView,
+  reference: renderReference,
   members: renderMembers,
-  room: renderRoom,
   sync: renderSync
 };
 
@@ -208,6 +213,7 @@ function eventCard(id, e, me){
   const canCheckIn = me && (e.participants||[]).some(p=>p.name===me);
 
   wrap.innerHTML = `
+    <div class="stripe"></div>
     <div class="date-badge">${formatDateLabel(e.date)}
       <span class="status-pill ${e.status==='완료'?'done':'upcoming'}">${escapeHtml(e.status||'예정')}</span>
     </div>
@@ -330,13 +336,64 @@ function renderCalendar(){
 
 function openDayDetail(iso, dayEvents, school){
   const me = getIdentity();
-  const body = document.createElement('div');
+  const admin = isAdmin();
   showModal(`
     <div class="modal-title">${formatDateLabel(iso)}</div>
-    ${school ? `<div class="note-line">${escapeHtml(CAL_TYPE_LABEL[school.type]||'학사일정')}: ${escapeHtml(school.label)}</div>` : ''}
+    <div id="schoolCalBox"></div>
     <div id="dayDetailList" style="margin-top:12px;"></div>
     ${dayEvents.length===0 ? '<div class="empty-state">이 날은 예정된 연습이 없어</div>' : ''}
   `);
+
+  function renderSchoolCalBox(){
+    const box = document.getElementById('schoolCalBox');
+    const cur = STATE.schoolCalendar[iso];
+    if(!admin){
+      box.innerHTML = cur ? `<div class="note-line">${escapeHtml(CAL_TYPE_LABEL[cur.type]||'학사일정')}: ${escapeHtml(cur.label)}</div>` : '';
+      return;
+    }
+    if(cur){
+      box.innerHTML = `
+        <div class="note-line" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+          <span>${escapeHtml(CAL_TYPE_LABEL[cur.type]||'학사일정')}: ${escapeHtml(cur.label)}</span>
+          <button class="btn btn-danger btn-sm" id="schoolCalDel">삭제</button>
+        </div>
+      `;
+      document.getElementById('schoolCalDel').addEventListener('click', async ()=>{
+        await dbRemove(`schoolCalendar/${iso}`);
+        delete STATE.schoolCalendar[iso];
+        renderSchoolCalBox();
+        renderCalendar();
+      });
+    } else {
+      box.innerHTML = `
+        <div class="field" style="display:flex; gap:8px; align-items:flex-end;">
+          <div style="flex:1;">
+            <label>학사일정 추가</label>
+            <input type="text" id="schoolCalLabel" placeholder="예: 재량휴업일">
+          </div>
+          <select id="schoolCalType" style="width:110px;">
+            <option value="holiday">휴일</option>
+            <option value="exam">시험</option>
+            <option value="discretionary">재량</option>
+            <option value="club">동아리</option>
+          </select>
+          <button class="btn btn-primary btn-sm" id="schoolCalAdd">추가</button>
+        </div>
+      `;
+      document.getElementById('schoolCalAdd').addEventListener('click', async ()=>{
+        const label = document.getElementById('schoolCalLabel').value.trim();
+        if(!label){ toast('내용을 입력해줘'); return; }
+        const type = document.getElementById('schoolCalType').value;
+        const payload = { label, type };
+        await dbSet(`schoolCalendar/${iso}`, payload);
+        STATE.schoolCalendar[iso] = payload;
+        renderSchoolCalBox();
+        renderCalendar();
+      });
+    }
+  }
+  renderSchoolCalBox();
+
   const list = document.getElementById('dayDetailList');
   dayEvents.forEach(e => list.appendChild(eventCard(e.id, e, me)));
 }
@@ -344,21 +401,41 @@ function openDayDetail(iso, dayEvents, school){
 // ================================================================
 // 일정관리 (관리자 CRUD)
 // ================================================================
+let SCHEDULE_MONTH_FILTER = 'all';
+
 function renderSchedule(){
   const view = document.getElementById('view');
   const admin = isAdmin();
-  const list = eventsSorted();
+
+  const months = [...new Set(Object.values(STATE.events).map(e=>e.date.slice(0,7)))].sort().reverse();
+  let list = Object.entries(STATE.events);
+  if(SCHEDULE_MONTH_FILTER !== 'all'){
+    list = list.filter(([,e]) => e.date.slice(0,7) === SCHEDULE_MONTH_FILTER);
+  }
+  list.sort((a,b) => b[1].date.localeCompare(a[1].date)); // 최신순(내림차순)
 
   view.innerHTML = `
     <div class="section-title">일정 관리
       ${admin ? '' : `<button class="btn btn-ghost btn-sm" id="adminBtn">🔒 관리자</button>`}
     </div>
     ${admin ? '' : `<div class="admin-lock">일정 추가/삭제는 관리자만 가능해. 참석 체크는 홈/달력에서 본인 이름으로 바로 가능함.</div>`}
+    <div class="pill-row" id="monthPills">
+      <button type="button" class="filter-pill ${SCHEDULE_MONTH_FILTER==='all'?'active':''}" data-month="all">전체</button>
+      ${months.map(m=>{
+        const label = `${parseInt(m.slice(5,7),10)}월`;
+        return `<button type="button" class="filter-pill ${SCHEDULE_MONTH_FILTER===m?'active':''}" data-month="${m}">${label}</button>`;
+      }).join('')}
+    </div>
     <div id="scheduleList"></div>
+    ${list.length===0 ? '<div class="empty-state">해당 월에는 일정이 없어</div>' : ''}
   `;
   if(!admin){
     document.getElementById('adminBtn').addEventListener('click', openAdminPrompt);
   }
+  document.querySelectorAll('#monthPills .filter-pill').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ SCHEDULE_MONTH_FILTER = btn.dataset.month; renderSchedule(); });
+  });
+
   const me = getIdentity();
   const container = document.getElementById('scheduleList');
   list.forEach(([id, e])=>{
@@ -467,21 +544,36 @@ function openEventForm(id, existing){
 }
 
 // ================================================================
-// 곡별 파트 배정
+// 자료실 (곡별 파트배정 + 밴드부실 사용 — 더 이상 자주 안 바뀌는 참고자료라 탭 통합)
 // ================================================================
-function renderSongsView(){
+let REFERENCE_TAB = 'songs'; // 'songs' | 'room'
+
+function renderReference(){
   const view = document.getElementById('view');
   const admin = isAdmin();
   view.innerHTML = `
-    <div class="section-title">곡별 파트 배정
+    <div class="section-title">자료실
       ${admin ? '' : `<button class="btn btn-ghost btn-sm" id="adminBtn">🔒 관리자</button>`}
     </div>
-    <div id="songsList"></div>
-    ${admin ? `<button class="btn btn-accent btn-block" id="addSongBtn" style="margin-top:8px;">+ 곡 추가</button>` : ''}
+    <div class="pill-row">
+      <button type="button" class="filter-pill ${REFERENCE_TAB==='songs'?'active':''}" data-tab="songs">🎵 곡별 파트배정</button>
+      <button type="button" class="filter-pill ${REFERENCE_TAB==='room'?'active':''}" data-tab="room">🚪 밴드부실 사용</button>
+    </div>
+    <div id="referenceBody"></div>
   `;
   if(!admin) document.getElementById('adminBtn').addEventListener('click', openAdminPrompt);
+  view.querySelectorAll('.pill-row .filter-pill').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ REFERENCE_TAB = btn.dataset.tab; renderReference(); });
+  });
+  if(REFERENCE_TAB === 'songs') renderSongsSection(document.getElementById('referenceBody'), admin);
+  else renderRoomSection(document.getElementById('referenceBody'), admin);
+}
 
-  const list = document.getElementById('songsList');
+function renderSongsSection(container, admin){
+  container.innerHTML = admin ? `<button class="btn btn-accent btn-block" id="addSongBtn" style="margin-bottom:12px;">+ 곡 추가</button>` : '';
+  const list = document.createElement('div');
+  container.appendChild(list);
+
   Object.entries(STATE.songs).forEach(([title, song])=>{
     const card = document.createElement('div');
     card.className = 'setlist-card';
@@ -490,6 +582,7 @@ function renderSongsView(){
       `<div class="role-chip"><span class="role-label">${r}</span>${song.roles[r].map(e=>e.name+(e.note?` (${e.note})`:'')).join(', ')}</div>`
     ).join('');
     card.innerHTML = `
+      <div class="stripe"></div>
       <div class="song-title">${escapeHtml(title)}</div>
       <div class="role-grid">${chips}</div>
       ${admin ? `<div style="margin-top:10px; display:flex; gap:8px;">
@@ -509,6 +602,48 @@ function renderSongsView(){
     list.appendChild(card);
   });
   if(admin) document.getElementById('addSongBtn').addEventListener('click', ()=> openSongForm(null, null));
+}
+
+function renderRoomSection(container, admin){
+  const days = WEEKDAYS.slice(0,5); // 월~금
+  container.innerHTML = `
+    <div class="section-sub" style="margin-top:0;">학생밴드/교사밴드 사용 시간표. 비어있으면 사용 가능.</div>
+    <div class="card" style="overflow-x:auto;">
+      <table class="room-table">
+        <thead><tr><th>시간</th>${days.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+        <tbody id="roomBody"></tbody>
+      </table>
+    </div>
+  `;
+  const body = container.querySelector('#roomBody');
+  ROOM_ROWS.forEach(rowLabel=>{
+    const tr = document.createElement('tr');
+    let rowHtml = `<td>${rowLabel.split(' ')[1]||rowLabel}</td>`;
+    days.forEach(day=>{
+      const val = (STATE.roomSchedule[day]||{})[rowLabel] || '';
+      const cls = val==='학생밴드' ? 'student' : val==='교사밴드' ? 'teacher' : '';
+      if(admin){
+        rowHtml += `<td class="room-cell ${cls}" data-day="${day}" data-row="${escapeHtml(rowLabel)}" style="cursor:pointer;">${escapeHtml(val)}</td>`;
+      } else {
+        rowHtml += `<td class="room-cell ${cls}">${escapeHtml(val)}</td>`;
+      }
+    });
+    tr.innerHTML = rowHtml;
+    body.appendChild(tr);
+  });
+  if(admin){
+    body.querySelectorAll('td[data-day]').forEach(td=>{
+      td.addEventListener('click', async ()=>{
+        const day = td.dataset.day, row = td.dataset.row;
+        const cur = (STATE.roomSchedule[day]||{})[row] || '';
+        const next = cur === '' ? '학생밴드' : cur === '학생밴드' ? '교사밴드' : '';
+        await dbPatch(`roomSchedule/${day}`, { [row]: next });
+        STATE.roomSchedule[day] = STATE.roomSchedule[day] || {};
+        STATE.roomSchedule[day][row] = next;
+        renderReference();
+      });
+    });
+  }
 }
 
 function openSongForm(title, existing){
@@ -618,60 +753,6 @@ function openMemberForm(name, existing){
     toast(existing?'수정됨':'추가됨');
     closeModal(); render();
   });
-}
-
-// ================================================================
-// 밴드부실 사용
-// ================================================================
-function renderRoom(){
-  const view = document.getElementById('view');
-  const admin = isAdmin();
-  const days = WEEKDAYS.slice(0,5); // 월~금
-
-  view.innerHTML = `
-    <div class="section-title">밴드부실 사용
-      ${admin ? '' : `<button class="btn btn-ghost btn-sm" id="adminBtn">🔒 관리자</button>`}
-    </div>
-    <div class="section-sub">학생밴드/교사밴드 사용 시간표. 비어있으면 사용 가능.</div>
-    <div class="card" style="overflow-x:auto;">
-      <table class="room-table">
-        <thead><tr><th>시간</th>${days.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
-        <tbody id="roomBody"></tbody>
-      </table>
-    </div>
-  `;
-  if(!admin) document.getElementById('adminBtn').addEventListener('click', openAdminPrompt);
-
-  const body = document.getElementById('roomBody');
-  ROOM_ROWS.forEach(rowLabel=>{
-    const tr = document.createElement('tr');
-    let rowHtml = `<td>${rowLabel.split(' ')[1]||rowLabel}</td>`;
-    days.forEach(day=>{
-      const val = (STATE.roomSchedule[day]||{})[rowLabel] || '';
-      const cls = val==='학생밴드' ? 'student' : val==='교사밴드' ? 'teacher' : '';
-      if(admin){
-        rowHtml += `<td class="room-cell ${cls}" data-day="${day}" data-row="${escapeHtml(rowLabel)}" style="cursor:pointer;">${escapeHtml(val)}</td>`;
-      } else {
-        rowHtml += `<td class="room-cell ${cls}">${escapeHtml(val)}</td>`;
-      }
-    });
-    tr.innerHTML = rowHtml;
-    body.appendChild(tr);
-  });
-
-  if(admin){
-    body.querySelectorAll('td[data-day]').forEach(td=>{
-      td.addEventListener('click', async ()=>{
-        const day = td.dataset.day, row = td.dataset.row;
-        const cur = (STATE.roomSchedule[day]||{})[row] || '';
-        const next = cur === '' ? '학생밴드' : cur === '학생밴드' ? '교사밴드' : '';
-        await dbPatch(`roomSchedule/${day}`, { [row]: next });
-        STATE.roomSchedule[day] = STATE.roomSchedule[day] || {};
-        STATE.roomSchedule[day][row] = next;
-        render();
-      });
-    });
-  }
 }
 
 // ================================================================
