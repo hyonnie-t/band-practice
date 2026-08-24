@@ -12,4 +12,4 @@ const DB_URL = "https://daeyoung-band-default-rtdb.firebaseio.com";
 const ADMIN_KEY = "daeyoung2026";
 
 // ICS(구글/애플 캘린더 구독) 피드 URL — GAS 배포 후 이 값 채우기
-const ICS_FEED_URL = ""; // 예: "https://script.google.com/macros/s/xxxx/exec"
+const ICS_FEED_URL = ""; // 예: "https://script.google.com/macros/s/AKfycbw3T8ykStmFt_Ch789KxqxHWqL1QK8qI1WavF75TBf8e2TKctEFbhwbfQuahhqA2jDkCg/exec"
