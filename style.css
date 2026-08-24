@@ -240,7 +240,7 @@ a{color:inherit;}
 .month-nav button{background:none; border:none; font-size:18px; padding:4px 10px; color:var(--ink-soft);}
 
 .cal-grid{
-  display:grid; grid-template-columns:repeat(7,1fr);
+  display:grid; grid-template-columns:repeat(5,1fr);
   gap:4px;
   background:var(--surface); border:1px solid var(--border);
   border-radius:var(--radius-lg); padding:10px; box-shadow:var(--shadow);
@@ -279,6 +279,18 @@ a{color:inherit;}
   padding:10px 12px; font-size:14px; background:var(--surface); color:var(--ink);
 }
 .field textarea{resize:vertical; min-height:60px;}
+
+.school-cal-row{
+  display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+  margin-bottom:14px;
+}
+.school-cal-row select{
+  flex:1; min-width:90px;
+  border:1px solid var(--border); border-radius:var(--radius-md);
+  padding:9px 10px; font-size:13.5px; background:var(--surface); color:var(--ink);
+}
+.school-cal-row .btn{ flex-shrink:0; }
+.school-cal-row .note-line{ flex-basis:100%; }
 
 /* ---------- 모달 ---------- */
 .modal-backdrop{
