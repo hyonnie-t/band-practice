@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>기대이상 연습 일정</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-row">
+      <div class="brand">기대이상<small>2026 대영중 교사밴드 연습 일정</small></div>
+      <button class="identity-chip" id="identityChip" type="button">
+        <span class="avatar" id="identityAvatar">?</span>
+        <span id="identityName">이름 선택</span>
+      </button>
+    </div>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <button class="fab" id="fab" type="button" style="display:none;" aria-label="일정 추가">+</button>
+
+  <nav class="bottom-nav">
+    <button data-route="home"><span class="icon">🏠</span>홈</button>
+    <button data-route="calendar"><span class="icon">📅</span>달력</button>
+    <button data-route="schedule"><span class="icon">📝</span>일정관리</button>
+    <button data-route="songs"><span class="icon">🎵</span>파트배정</button>
+    <button data-route="members"><span class="icon">👥</span>참여자</button>
+    <button data-route="room"><span class="icon">🚪</span>부실사용</button>
+    <button data-route="sync"><span class="icon">🔗</span>연동</button>
+  </nav>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot"></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
