@@ -206,6 +206,7 @@ a{color:inherit;}
   border:1px solid var(--border); background:var(--surface);
   border-radius:999px; padding:7px 14px; font-size:13px; font-weight:600;
   cursor:pointer;
+  flex-shrink:0; white-space:nowrap;
 }
 .attend-btn.attend.selected{background:var(--teal); border-color:var(--teal); color:#fff;}
 .attend-btn.absent.selected{background:var(--coral); border-color:var(--coral); color:#fff;}
@@ -351,3 +352,43 @@ table.room-table th{background:var(--surface-soft); font-weight:700;}
   .bottom-nav{ position:sticky; top:0; border-top:none; border-bottom:1px solid var(--border);}
   body{padding-bottom:0;}
 }
+
+/* ---------- 참여자 맞추기 ---------- */
+.sync-banner{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  background:#FDF3E3; color:var(--accent-deep); font-size:12.5px; font-weight:600;
+  border-radius:var(--radius-sm); padding:8px 10px; margin-bottom:14px;
+}
+.sync-banner .btn{flex-shrink:0;}
+.sync-row{
+  display:flex; gap:10px; align-items:flex-start;
+  padding:10px 0; border-bottom:1px solid var(--border); font-size:13px;
+}
+.sync-row input{margin-top:3px;}
+.sync-head{font-weight:700; margin-bottom:3px;}
+.sync-add{color:var(--teal);}
+.sync-del{color:var(--coral);}
+.sync-row .role-label{font-size:10.5px; color:var(--ink-soft); margin-left:3px;}
+.new-tag{
+  font-size:10.5px; font-weight:700; color:var(--teal);
+  background:var(--teal-soft); border-radius:999px; padding:2px 7px;
+}
+
+/* ---------- 곡별 현황 ---------- */
+.song-overview{padding:10px 12px;}
+.song-overview-head{font-size:12.5px; font-weight:700; color:var(--ink-soft); margin:2px 4px 6px;}
+.song-overview-row{
+  width:100%; display:flex; align-items:center; gap:8px;
+  background:none; border:none; border-top:1px solid var(--border);
+  padding:9px 4px; font-size:13px; color:var(--ink); text-align:left; cursor:pointer;
+}
+.song-overview-row:first-of-type{border-top:none;}
+.song-overview-row .so-title{flex:1; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.song-overview-row .so-count{color:var(--ink-soft); font-size:12px;}
+.song-overview-row .so-next{color:var(--accent-deep); font-size:12px; font-weight:600; min-width:84px; text-align:right;}
+.stat-row{display:flex; gap:8px;}
+.stat-row > div{
+  flex:1; background:var(--surface-soft); border-radius:var(--radius-sm);
+  padding:8px 4px; text-align:center; font-size:11.5px; color:var(--ink-soft);
+}
+.stat-row b{display:block; font-size:18px; color:var(--ink);}

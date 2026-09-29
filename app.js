@@ -82,6 +82,82 @@ function eventsSorted(){
   return Object.entries(STATE.events).sort((a,b)=> a[1].date < b[1].date ? -1 : a[1].date > b[1].date ? 1 : 0);
 }
 
+// ---------------- 곡 ↔ 일정 참여자 ----------------
+// 곡 파트배정(자료실) 기준 참여자 목록
+function participantsFromSong(song){
+  const list = [];
+  if(!song) return list;
+  ROLES.forEach(role=>{
+    ((song.roles||{})[role]||[]).forEach(entry=>{
+      list.push({ name: entry.name, role, note: entry.note||'' });
+    });
+  });
+  return list;
+}
+function participantKey(p){ return `${p.role}:${p.name}`; }
+
+// 일정은 등록 시점의 참여자를 복사해 두기 때문에, 자료실에서 파트배정을 바꿔도 기존 일정엔 반영 안 됨.
+// 오늘 이후 일정 중 곡 파트배정과 참여자가 다른 것만 골라 차이(추가/제외)를 계산.
+// 지난 일정은 실제 참여 기록이라 대상에서 뺌.
+function participantDiffs(songTitle){
+  const today = todayISO();
+  return eventsSorted()
+    .filter(([,e]) => e.date >= today && STATE.songs[e.songId] && (!songTitle || e.songId === songTitle))
+    .map(([id, e])=>{
+      const next = participantsFromSong(STATE.songs[e.songId]).map(p=>({ name:p.name, role:p.role }));
+      const prevKeys = new Set((e.participants||[]).map(participantKey));
+      const nextKeys = new Set(next.map(participantKey));
+      const added = next.filter(p => !prevKeys.has(participantKey(p)));
+      const removed = (e.participants||[]).filter(p => !nextKeys.has(participantKey(p)));
+      return { id, e, next, added, removed };
+    })
+    .filter(d => d.added.length || d.removed.length);
+}
+
+async function applyParticipantDiff(d){
+  const prevAbsence = d.e.absence || {};
+  const absence = {};
+  d.next.forEach(p=>{ absence[p.name] = prevAbsence[p.name] || { absent:false, reason:'' }; });
+  await dbPatch(`events/${d.id}`, { participants: d.next, absence });
+  STATE.events[d.id] = { ...d.e, participants: d.next, absence };
+}
+
+// 차이 목록을 보여주고, 체크된 일정만 곡 파트배정 기준으로 참여자를 다시 맞춤
+function openParticipantSyncModal(songTitle){
+  const diffs = participantDiffs(songTitle);
+  if(diffs.length === 0){ toast('예정 일정 참여자가 모두 파트배정과 같아'); return; }
+  const fmt = (p) => `${escapeHtml(p.name)}<span class="role-label">${escapeHtml(p.role)}</span>`;
+  showModal(`
+    <div class="modal-title">예정 일정 참여자 맞추기</div>
+    <div class="section-sub">자료실 파트배정과 참여자가 다른 예정 일정이야. 체크한 일정만 파트배정 기준으로 바뀌고, 남는 사람의 참석/불참 기록은 그대로 유지돼. 지난 일정은 건드리지 않아.</div>
+    <div id="syncList">
+      ${diffs.map((d,i)=>`
+        <label class="sync-row">
+          <input type="checkbox" data-idx="${i}" checked>
+          <div>
+            <div class="sync-head">${formatDateLabel(d.e.date)} · ${escapeHtml(d.e.songId)}</div>
+            ${d.added.length ? `<div class="sync-add">+ ${d.added.map(fmt).join(', ')}</div>` : ''}
+            ${d.removed.length ? `<div class="sync-del">− ${d.removed.map(fmt).join(', ')}</div>` : ''}
+          </div>
+        </label>
+      `).join('')}
+    </div>
+    <button class="btn btn-primary btn-block" id="syncSubmit" style="margin-top:12px;">선택한 일정에 반영</button>
+  `);
+  document.getElementById('syncSubmit').addEventListener('click', async (ev)=>{
+    const picked = Array.from(document.querySelectorAll('#syncList input:checked')).map(c => diffs[Number(c.dataset.idx)]);
+    if(picked.length === 0){ toast('반영할 일정을 선택해줘'); return; }
+    ev.target.disabled = true;
+    try{
+      for(const d of picked) await applyParticipantDiff(d);
+      toast(`${picked.length}개 일정에 반영됨`);
+    }catch(err){
+      toast('반영 중 오류: ' + err.message);
+    }
+    closeModal(); render();
+  });
+}
+
 // ---------------- 신원(이름 선택) ----------------
 function getIdentity(){ return localStorage.getItem('bp_name') || ''; }
 function setIdentity(name){ localStorage.setItem('bp_name', name); renderIdentityChip(); }
@@ -423,21 +499,94 @@ function openDayDetail(iso, dayEvents, school){
 // 일정관리 (관리자 CRUD)
 // ================================================================
 let SCHEDULE_MONTH_FILTER = 'all';
+let SCHEDULE_SONG_FILTER = 'all'; // 'all' | 곡명
+
+// 곡별 연습 현황 (지난/남은 횟수, 다음·마지막 연습일) — 날짜 기준으로 계산
+function songStats(songTitle){
+  const today = todayISO();
+  const dates = Object.values(STATE.events).filter(e => e.songId === songTitle).map(e => e.date).sort();
+  const past = dates.filter(d => d < today);
+  const upcoming = dates.filter(d => d >= today);
+  return {
+    total: dates.length,
+    past: past.length,
+    upcoming: upcoming.length,
+    last: past.length ? past[past.length-1] : null,
+    next: upcoming.length ? upcoming[0] : null
+  };
+}
+
+function songOverviewHtml(){
+  const titles = Object.keys(STATE.songs);
+  if(titles.length === 0) return '';
+  return `
+    <div class="card song-overview">
+      <div class="song-overview-head">곡별 현황</div>
+      ${titles.map(t=>{
+        const st = songStats(t);
+        return `<button type="button" class="song-overview-row" data-song="${escapeHtml(t)}">
+          <span class="legend-dot" style="background:${STATE.songs[t].color}"></span>
+          <span class="so-title">${escapeHtml(t)}</span>
+          <span class="so-count">${st.past}/${st.total}회</span>
+          <span class="so-next">${st.next ? '다음 ' + formatDateLabel(st.next) : '예정 없음'}</span>
+        </button>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+function songSummaryHtml(songTitle){
+  const st = songStats(songTitle);
+  const song = STATE.songs[songTitle];
+  return `
+    <div class="setlist-card" style="--song-color:${song ? song.color : '#999'}">
+      <div class="stripe"></div>
+      <div class="song-title">${escapeHtml(songTitle)}</div>
+      <div class="stat-row">
+        <div><b>${st.total}</b>전체</div>
+        <div><b>${st.past}</b>지난 연습</div>
+        <div><b>${st.upcoming}</b>남은 연습</div>
+      </div>
+      <div class="note-line">마지막 연습 ${st.last ? formatDateLabel(st.last) : '없음'} · 다음 연습 ${st.next ? formatDateLabel(st.next) : '없음'}</div>
+    </div>
+  `;
+}
 
 function renderSchedule(){
   const view = document.getElementById('view');
   const admin = isAdmin();
+  if(SCHEDULE_SONG_FILTER !== 'all' && !STATE.songs[SCHEDULE_SONG_FILTER]
+     && !Object.values(STATE.events).some(e => e.songId === SCHEDULE_SONG_FILTER)){
+    SCHEDULE_SONG_FILTER = 'all';
+  }
 
   const months = [...new Set(Object.values(STATE.events).map(e=>e.date.slice(0,7)))].sort().reverse();
   let list = Object.entries(STATE.events);
+  if(SCHEDULE_SONG_FILTER !== 'all'){
+    list = list.filter(([,e]) => e.songId === SCHEDULE_SONG_FILTER);
+  }
   if(SCHEDULE_MONTH_FILTER !== 'all'){
     list = list.filter(([,e]) => e.date.slice(0,7) === SCHEDULE_MONTH_FILTER);
   }
   list.sort((a,b) => b[1].date.localeCompare(a[1].date)); // 최신순(내림차순)
 
+  const pendingSync = admin ? participantDiffs(SCHEDULE_SONG_FILTER === 'all' ? null : SCHEDULE_SONG_FILTER).length : 0;
+
   view.innerHTML = `
     <div class="section-title">일정 관리 ${adminBadgeHtml()}</div>
     ${admin ? '' : `<div class="admin-lock">일정 추가/삭제는 관리자만 가능해. 참석 체크는 홈/달력에서 본인 이름으로 바로 가능함.</div>`}
+    ${pendingSync ? `
+      <div class="sync-banner">
+        <span>파트배정과 참여자가 다른 예정 일정 ${pendingSync}개</span>
+        <button class="btn btn-accent btn-sm" id="openSync">확인하고 반영</button>
+      </div>` : ''}
+    <div class="pill-row" id="songPills">
+      <button type="button" class="filter-pill ${SCHEDULE_SONG_FILTER==='all'?'active':''}" data-song="all">모든 곡</button>
+      ${Object.keys(STATE.songs).map(t=>`
+        <button type="button" class="filter-pill ${SCHEDULE_SONG_FILTER===t?'active':''}" data-song="${escapeHtml(t)}">
+          <span class="legend-dot" style="background:${STATE.songs[t].color}; display:inline-block; margin-right:4px;"></span>${escapeHtml(t)}
+        </button>`).join('')}
+    </div>
     <div class="pill-row" id="monthPills">
       <button type="button" class="filter-pill ${SCHEDULE_MONTH_FILTER==='all'?'active':''}" data-month="all">전체</button>
       ${months.map(m=>{
@@ -445,13 +594,19 @@ function renderSchedule(){
         return `<button type="button" class="filter-pill ${SCHEDULE_MONTH_FILTER===m?'active':''}" data-month="${m}">${label}</button>`;
       }).join('')}
     </div>
+    ${SCHEDULE_SONG_FILTER === 'all' ? songOverviewHtml() : songSummaryHtml(SCHEDULE_SONG_FILTER)}
     <div id="scheduleList"></div>
-    ${list.length===0 ? '<div class="empty-state">해당 월에는 일정이 없어</div>' : ''}
+    ${list.length===0 ? '<div class="empty-state">조건에 맞는 일정이 없어</div>' : ''}
   `;
   bindAdminBadge();
   document.querySelectorAll('#monthPills .filter-pill').forEach(btn=>{
     btn.addEventListener('click', ()=>{ SCHEDULE_MONTH_FILTER = btn.dataset.month; renderSchedule(); });
   });
+  document.querySelectorAll('#songPills .filter-pill, .song-overview-row').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ SCHEDULE_SONG_FILTER = btn.dataset.song; renderSchedule(); });
+  });
+  const syncBtn = document.getElementById('openSync');
+  if(syncBtn) syncBtn.addEventListener('click', ()=> openParticipantSyncModal(SCHEDULE_SONG_FILTER === 'all' ? null : SCHEDULE_SONG_FILTER));
 
   const me = getIdentity();
   const container = document.getElementById('scheduleList');
@@ -476,19 +631,21 @@ function renderSchedule(){
     container.appendChild(card);
   });
 
+  // 곡 필터가 걸려 있으면 + 버튼으로 추가할 때 그 곡이 미리 선택됨
   const fab = document.getElementById('fab');
-  fab.onclick = () => openEventForm(null, null);
+  fab.onclick = () => openEventForm(null, null, SCHEDULE_SONG_FILTER === 'all' ? '' : SCHEDULE_SONG_FILTER);
 }
 
-function openEventForm(id, existing){
+function openEventForm(id, existing, presetSong){
   const songTitles = Object.keys(STATE.songs);
+  const initialSong = existing ? existing.songId : (presetSong || '');
   showModal(`
     <div class="modal-title">${existing ? '일정 수정' : '일정 추가'}</div>
     <div class="field"><label>날짜</label><input type="date" id="f_date" value="${existing?existing.date:todayISO()}"></div>
     <div class="field"><label>연습곡</label>
       <select id="f_song">
         <option value="">선택</option>
-        ${songTitles.map(t=>`<option value="${escapeHtml(t)}" ${existing&&existing.songId===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
+        ${songTitles.map(t=>`<option value="${escapeHtml(t)}" ${initialSong===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}
       </select>
     </div>
     <div class="field"><label>상태</label>
@@ -499,32 +656,42 @@ function openEventForm(id, existing){
     </div>
     <div class="field"><label>비고</label><textarea id="f_note">${existing?escapeHtml(existing.note||''):''}</textarea></div>
     <div class="field" id="f_participantsWrap">
-      <label>참여자 (곡 선택 시 자동 구성, 필요시 체크 해제로 제외)</label>
+      <label>참여자 (곡의 현재 파트배정 기준, 필요시 체크 해제로 제외)</label>
       <div id="f_participants"></div>
+      <div id="f_removedNote"></div>
     </div>
     <button class="btn btn-primary btn-block" id="f_submit">${existing?'저장':'추가'}</button>
   `);
 
-  function renderParticipantPicker(songTitle, keepSelected){
+  // 수정 시: 파트배정 전원을 체크하되, 이 일정에 없던 사람(새로 배정됐거나 예전에 제외했던 사람)은 표시해서 구분,
+  // 파트배정에서 빠진 사람은 목록 아래에 안내(저장하면 이 일정에서 빠짐)
+  function renderParticipantPicker(songTitle, prevParticipants){
     const song = STATE.songs[songTitle];
     const box = document.getElementById('f_participants');
+    const removedBox = document.getElementById('f_removedNote');
+    removedBox.innerHTML = '';
     if(!song){ box.innerHTML = '<div class="section-sub">곡을 먼저 선택해줘</div>'; return; }
-    const auto = [];
-    ROLES.forEach(role=>{
-      (song.roles[role]||[]).forEach(entry=>{
-        auto.push({ name: entry.name, role, note: entry.note||'' });
-      });
-    });
-    const selectedNames = keepSelected ? new Set(keepSelected.map(p=>p.name)) : new Set(auto.map(p=>p.name));
-    box.innerHTML = auto.map(p=>`
+    const auto = participantsFromSong(song);
+    const prevKeys = prevParticipants ? new Set(prevParticipants.map(participantKey)) : null;
+    box.innerHTML = auto.map(p=>{
+      const isNew = prevKeys && !prevKeys.has(participantKey(p));
+      return `
       <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px;">
-        <input type="checkbox" value="${escapeHtml(p.name)}" data-role="${escapeHtml(p.role)}" ${selectedNames.has(p.name)?'checked':''}>
+        <input type="checkbox" value="${escapeHtml(p.name)}" data-role="${escapeHtml(p.role)}" checked>
         <span class="role-label" style="color:var(--ink-soft); font-size:11px;">${escapeHtml(p.role)}</span>
         ${escapeHtml(p.name)}${p.note?` (${escapeHtml(p.note)})`:''}
-      </label>
-    `).join('');
+        ${isNew ? '<span class="new-tag">이 일정에 없었음</span>' : ''}
+      </label>`;
+    }).join('');
+    if(prevParticipants){
+      const autoKeys = new Set(auto.map(participantKey));
+      const gone = prevParticipants.filter(p => !autoKeys.has(participantKey(p)));
+      if(gone.length){
+        removedBox.innerHTML = `<div class="note-line">파트배정에서 빠져서 저장하면 이 일정에서도 빠짐: ${gone.map(p=>`${escapeHtml(p.name)}(${escapeHtml(p.role)})`).join(', ')}</div>`;
+      }
+    }
   }
-  renderParticipantPicker(existing?existing.songId:'', existing?existing.participants:null);
+  renderParticipantPicker(initialSong, existing ? (existing.participants||[]) : null);
 
   document.getElementById('f_song').addEventListener('change', (e)=>{
     renderParticipantPicker(e.target.value, null);
@@ -596,15 +763,24 @@ function renderSongsSection(container, admin){
     const chips = ROLES.filter(r => (song.roles[r]||[]).length).map(r =>
       `<div class="role-chip"><span class="role-label">${r}</span>${song.roles[r].map(e=>e.name+(e.note?` (${e.note})`:'')).join(', ')}</div>`
     ).join('');
+    const st = songStats(title);
     card.innerHTML = `
       <div class="stripe"></div>
       <div class="song-title">${escapeHtml(title)}</div>
       <div class="role-grid">${chips}</div>
-      ${admin ? `<div style="margin-top:10px; display:flex; gap:8px;">
+      <div class="note-line">연습 ${st.past}/${st.total}회 · 다음 연습 ${st.next ? formatDateLabel(st.next) : '없음'}</div>
+      <div style="margin-top:10px; display:flex; gap:8px;">
+        <button class="btn btn-ghost btn-sm" data-act="events">📝 일정 보기</button>
+        ${admin ? `
         <button class="btn btn-ghost btn-sm" data-act="edit">수정</button>
-        <button class="btn btn-danger btn-sm" data-act="del">삭제</button>
-      </div>` : ''}
+        <button class="btn btn-danger btn-sm" data-act="del">삭제</button>` : ''}
+      </div>
     `;
+    card.querySelector('[data-act="events"]').addEventListener('click', ()=>{
+      SCHEDULE_SONG_FILTER = title;
+      SCHEDULE_MONTH_FILTER = 'all';
+      navigate('schedule');
+    });
     if(admin){
       card.querySelector('[data-act="edit"]').addEventListener('click', ()=> openSongForm(title, song));
       card.querySelector('[data-act="del"]').addEventListener('click', async ()=>{
@@ -700,6 +876,8 @@ function openSongForm(title, existing){
     STATE.songs[newTitle] = payload;
     toast(existing ? '수정됨' : '추가됨');
     closeModal(); render();
+    // 파트배정이 바뀌어 예정 일정과 달라졌으면 바로 반영할지 물어봄
+    if(existing && participantDiffs(newTitle).length) openParticipantSyncModal(newTitle);
   });
 }
 
