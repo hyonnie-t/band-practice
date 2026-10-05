@@ -1,0 +1,33 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "members":        { ".read": "auth != null", ".write": false },
+    "songs":          { ".read": "auth != null", ".write": false },
+    "schoolCalendar": { ".read": "auth != null", ".write": false },
+
+    "events": {
+      ".read": "auth != null",
+      "$id": {
+        ".write": "auth != null",
+        ".validate": "newData.child('date').isString() && newData.child('songId').isString()",
+        "absence": {
+          "$name": {
+            ".validate": "newData.child('absent').isBoolean() && (!newData.child('reason').exists() || (newData.child('reason').isString() && newData.child('reason').val().length <= 200))"
+          }
+        }
+      }
+    },
+
+    "roomSchedule": {
+      ".read": "auth != null",
+      "$day": {
+        "$row": {
+          ".write": "auth != null",
+          ".validate": "newData.isString() && newData.val().length <= 20"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+# Firebase 보안 적용 절차
+
+`database.rules.json`은 **아직 콘솔에 적용되지 않았다.** 코드(익명 인증)를 먼저 배포하고 나서 규칙을 바꿔야 한다. 순서가 바뀌면 앱이 멈춘다.
+
+## 순서
+1. **백업**: `FB_API_KEY=웹API키 node tools/backup.mjs` (Node 18+). 규칙을 바꾸기 전에 `backup/`에 JSON이 생기는지 확인한다. 현재 콘솔 규칙 JSON도 메모장에 복사해둔다(롤백용).
+2. **익명 로그인 켜기**: Firebase 콘솔 > Authentication > 시작하기 > 로그인 방법 > 익명 > 사용 설정.
+3. **API 키 넣기**: 콘솔 > 프로젝트 설정 > 일반 > 웹 API 키를 `config.js`의 `FB_API_KEY`에 넣고 push. 공개돼도 되는 값이다. 필요하면 Google Cloud 콘솔 > 사용자 인증 정보에서 HTTP 리퍼러를 `hyonnie-t.github.io/*`로 제한한다.
+4. **배포 확인**: 개발자도구 Network 탭에서 `firebaseio.com` 요청에 `auth=`가 붙는지, 일정이 평소처럼 뜨는지 본다. 규칙이 아직 열려 있어 인증이 없어도 동작하므로 `auth=` 유무로 확인해야 한다.
+5. **규칙 적용**: 콘솔 > Realtime Database > 규칙에 `database.rules.json`을 붙여넣고, 게시 전에 규칙 시뮬레이터로 확인한다.
+6. **동작 확인**: 불참/참석 표시, 연습실 시간표(관리자) 변경이 되는지 본다. 막히면 이전 규칙으로 되돌린다.
+
+## 규칙 요점
+- `members`·`songs`·`schoolCalendar`는 앱이 읽기만 한다 → 쓰기를 막았다. 앱에는 이 데이터를 쓰는 코드가 없고 `tools/seed-2sem.html`만 쓴다.
+- **그래서 `tools/seed-2sem.html`은 규칙 적용 뒤 곡·학사일정 쓰기가 거부된다.** 다시 가져와야 하면 콘솔에서 규칙의 해당 경로를 잠깐 `auth != null`로 풀고 실행한 뒤 되돌리거나, 콘솔의 데이터 가져오기(JSON)를 쓴다.
+- `events`는 건별(`events/{id}`)로만 쓸 수 있어 전체 삭제가 안 된다. `roomSchedule`은 칸 단위로만 쓴다.
+
+## 한계
+앱 코드를 읽는 사람은 익명 토큰을 받을 수 있다. 관리자 키(`bp_admin`)도 화면 수준의 확인이라 개발자도구로 우회된다. 진짜 관리자 구분이 필요하면 이메일 로그인 인증과 관리자 uid 규칙으로 올려야 한다.

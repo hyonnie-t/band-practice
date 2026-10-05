@@ -5,6 +5,54 @@
 // Firebase Realtime Database 주소 (SDK 없이 REST API로 직접 fetch)
 const DB_URL = "https://daeyoung-band-default-rtdb.firebaseio.com";
 
+// ── Firebase 익명 인증 (REST) ─────────────────────────────────────────
+// FB_API_KEY: Firebase 콘솔 > 프로젝트 설정 > 일반 > 웹 API 키. 공개돼도 되는 값이다(접근 제어는 DB 규칙이 한다).
+// 비워두면 인증 없이 지금처럼 동작한다. 콘솔에서 Authentication > 익명 로그인을 켠 뒤 채울 것.
+// 이 블록은 window.fetch를 감싸 DB 주소로 가는 요청에만 ?auth=토큰을 붙인다 — 개별 fetch 호출은 고치지 않는다.
+// 토큰을 못 받으면(오프라인·콘솔 미설정) 토큰 없이 그대로 보내 규칙이 판단하게 한다.
+const FB_API_KEY='';
+(function(){
+  if(!FB_API_KEY)return;
+  const RK='fb_anon_refresh',nativeFetch=window.fetch.bind(window);
+  let tok='',exp=0,pending=null;
+  const lsGet=()=>{try{return localStorage.getItem(RK)||'';}catch(e){return '';}};
+  const lsSet=v=>{try{localStorage.setItem(RK,v);}catch(e){}};
+  async function viaRefresh(rt){
+    const r=await nativeFetch('https://securetoken.googleapis.com/v1/token?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(rt)});
+    if(!r.ok)return null;
+    const j=await r.json();
+    return {t:j.id_token,r:j.refresh_token,s:+j.expires_in};
+  }
+  async function viaSignUp(){
+    const r=await nativeFetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({returnSecureToken:true})});
+    if(!r.ok)return null;
+    const j=await r.json();
+    return {t:j.idToken,r:j.refreshToken,s:+j.expiresIn};
+  }
+  async function getToken(){
+    if(tok&&Date.now()<exp-60000)return tok;
+    if(pending)return pending;
+    pending=(async()=>{
+      try{
+        const rt=lsGet();
+        const g=(rt&&await viaRefresh(rt))||await viaSignUp();
+        if(!g)return '';
+        tok=g.t;exp=Date.now()+g.s*1000;lsSet(g.r);
+        return tok;
+      }catch(e){return '';}
+      finally{pending=null;}
+    })();
+    return pending;
+  }
+  window.fetch=async function(input,init){
+    if(typeof input==='string'&&input.indexOf(DB_URL)===0){
+      const t=await getToken();
+      if(t)input+=(input.indexOf('?')<0?'?':'&')+'auth='+encodeURIComponent(t);
+    }
+    return nativeFetch(input,init);
+  };
+})();
+
 // 관리자(효니 + 지정 소수) 전용 키.
 // ⚠ 해시로 저장해서 레포를 훑어봐도 평문 키가 바로 보이진 않지만,
 //    이건 "레포 열람 시 즉시 노출"만 막는 조치고 진짜 서버단 보안은 아님.
