@@ -10,7 +10,7 @@ const DB_URL = "https://daeyoung-band-default-rtdb.firebaseio.com";
 // 비워두면 인증 없이 지금처럼 동작한다. 콘솔에서 Authentication > 익명 로그인을 켠 뒤 채울 것.
 // 이 블록은 window.fetch를 감싸 DB 주소로 가는 요청에만 ?auth=토큰을 붙인다 — 개별 fetch 호출은 고치지 않는다.
 // 토큰을 못 받으면(오프라인·콘솔 미설정) 토큰 없이 그대로 보내 규칙이 판단하게 한다.
-const FB_API_KEY='';
+const FB_API_KEY='AIzaSyCNB62DS9UUoVtNFFqwb6pacWZmjgnLKfA';
 (function(){
   if(!FB_API_KEY)return;
   const RK='fb_anon_refresh',nativeFetch=window.fetch.bind(window);
