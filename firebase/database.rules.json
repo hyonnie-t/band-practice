@@ -3,17 +3,35 @@
     ".read": false,
     ".write": false,
 
-    "members":        { ".read": "auth != null", ".write": false },
-    "songs":          { ".read": "auth != null", ".write": false },
-    "schoolCalendar": { ".read": "auth != null", ".write": false },
+    "admin": {
+      "claims": {
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid && newData.isString() && root.child('adminSecret').exists() && newData.val() === root.child('adminSecret').val()"
+        }
+      }
+    },
+
+    "members": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('adminSecret').exists() && root.child('admin/claims').child(auth.uid).val() === root.child('adminSecret').val()"
+    },
+    "songs": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('adminSecret').exists() && root.child('admin/claims').child(auth.uid).val() === root.child('adminSecret').val()"
+    },
+    "schoolCalendar": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('adminSecret').exists() && root.child('admin/claims').child(auth.uid).val() === root.child('adminSecret').val()"
+    },
 
     "events": {
       ".read": "auth != null",
       "$id": {
-        ".write": "auth != null",
+        ".write": "auth != null && root.child('adminSecret').exists() && root.child('admin/claims').child(auth.uid).val() === root.child('adminSecret').val()",
         ".validate": "newData.child('date').isString() && newData.child('songId').isString()",
         "absence": {
           "$name": {
+            ".write": "auth != null",
             ".validate": "newData.child('absent').isBoolean() && (!newData.child('reason').exists() || (newData.child('reason').isString() && newData.child('reason').val().length <= 200))"
           }
         }
@@ -22,12 +40,7 @@
 
     "roomSchedule": {
       ".read": "auth != null",
-      "$day": {
-        "$row": {
-          ".write": "auth != null",
-          ".validate": "newData.isString() && newData.val().length <= 20"
-        }
-      }
+      ".write": "auth != null && root.child('adminSecret').exists() && root.child('admin/claims').child(auth.uid).val() === root.child('adminSecret').val()"
     }
   }
 }

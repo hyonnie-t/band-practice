@@ -11,6 +11,7 @@ const DB_URL = "https://daeyoung-band-default-rtdb.firebaseio.com";
 // 이 블록은 window.fetch를 감싸 DB 주소로 가는 요청에만 ?auth=토큰을 붙인다 — 개별 fetch 호출은 고치지 않는다.
 // 토큰을 못 받으면(오프라인·콘솔 미설정) 토큰 없이 그대로 보내 규칙이 판단하게 한다.
 const FB_API_KEY='AIzaSyCNB62DS9UUoVtNFFqwb6pacWZmjgnLKfA';
+window.fbUid=async function(){return '';};
 (function(){
   if(!FB_API_KEY)return;
   const RK='fb_anon_refresh',nativeFetch=window.fetch.bind(window);
@@ -44,6 +45,11 @@ const FB_API_KEY='AIzaSyCNB62DS9UUoVtNFFqwb6pacWZmjgnLKfA';
     })();
     return pending;
   }
+  // 현재 익명 계정의 uid(관리자 표시를 이 uid 아래에 남기려고 쓴다). 토큰을 못 받으면 ''.
+  window.fbUid=async function(){
+    const t=await getToken();
+    try{return JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).user_id||'';}catch(e){return '';}
+  };
   window.fetch=async function(input,init){
     if(typeof input==='string'&&input.indexOf(DB_URL)===0){
       const t=await getToken();
@@ -53,17 +59,17 @@ const FB_API_KEY='AIzaSyCNB62DS9UUoVtNFFqwb6pacWZmjgnLKfA';
   };
 })();
 
-// 관리자(효니 + 지정 소수) 전용 키.
-// ⚠ 해시로 저장해서 레포를 훑어봐도 평문 키가 바로 보이진 않지만,
-//    이건 "레포 열람 시 즉시 노출"만 막는 조치고 진짜 서버단 보안은 아님.
-//    RTDB 규칙 자체가 열려있으므로, 개발자도구에서 localStorage에 bp_admin=true를
-//    직접 심으면 여전히 우회 가능한 구조. 20명 신뢰 그룹 기준으로 채택한 트레이드오프.
-//    진짜로 막으려면 Firebase Authentication을 붙여서 RTDB 규칙 자체를
-//    "인증된 사용자만 쓰기 가능"으로 바꿔야 함 (필요해지면 언제든 요청해줘).
-//
-// 키를 바꾸고 싶으면: 브라우저 개발자도구 콘솔에서 아래 실행 후 나온 값을 붙여넣기
-//   crypto.subtle.digest('SHA-256', new TextEncoder().encode('새키')).then(b=>console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
-const ADMIN_KEY_HASH = "17618c0f12dea18511de08d7d25da335dec354df6db60f8cf7c393278cf5da7d";
+// 관리자 모드: 키를 이 파일에 두지 않는다. 입력한 키를 DB의 admin/claims/{내 uid}에 쓰면, DB 규칙이
+// 콘솔에 저장된 adminSecret과 같을 때만 기록을 허용한다(firebase/README.md). 키가 맞아야 곡·참여자·학사일정·
+// 시간표·일정 쓰기가 서버에서 열린다. 키 해시를 공개 레포에 두던 예전 방식(ADMIN_KEY_HASH)은 없앴다.
+// 키를 바꾸려면 콘솔에서 adminSecret 값만 바꾸면 되고, 기존 관리자 표시는 자동으로 무효가 된다.
+async function claimAdmin(key){
+  const uid = await window.fbUid();
+  if(!uid){ const e = new Error('no-auth'); e.code = 'no-auth'; throw e; }
+  const res = await fetch(`${DB_URL}/admin/claims/${uid}.json`, { method:'PUT', body: JSON.stringify(key) });
+  if(!res.ok){ const e = new Error('claim failed'); e.status = res.status; throw e; }
+  localStorage.setItem('bp_admin_uid', uid);
+}
 
 // ICS(구글/애플 캘린더 구독) 피드 URL — GAS 배포 후 이 값 채우기
 const ICS_FEED_URL = ""; // 예: "https://script.google.com/macros/s/AKfycbw3T8ykStmFt_Ch789KxqxHWqL1QK8qI1WavF75TBf8e2TKctEFbhwbfQuahhqA2jDkCg/exec"

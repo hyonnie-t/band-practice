@@ -192,8 +192,22 @@ async function sha256Hex(text){
 }
 
 function isAdmin(){ return localStorage.getItem('bp_admin') === 'true'; }
+// 관리자 표시는 익명 계정(uid)에 붙는다. 계정이 바뀌었으면(저장 데이터 삭제·자동 정리) 관리자 모드를 풀어 다시 키를 받는다.
+// uid를 못 받는 경우(오프라인)엔 건드리지 않는다.
+async function verifyAdminUid(){
+  if(!isAdmin()) return;
+  const uid = await window.fbUid();
+  if(uid && localStorage.getItem('bp_admin_uid') !== uid){
+    localStorage.removeItem('bp_admin'); localStorage.removeItem('bp_admin_uid');
+  }
+}
+// 쓰기가 규칙에 막히면 호출부가 오류를 잡지 않아 조용히 사라지므로, 여기서 한 번 알린다.
+window.addEventListener('unhandledrejection', (ev)=>{
+  const m = String((ev.reason && ev.reason.message) || '');
+  if(/^db(Set|Patch|Push|Remove) failed/.test(m)) toast('저장하지 못했어. 관리자 권한이 풀렸다면 🔓 로그아웃 후 키를 다시 입력해줘');
+});
 function logoutAdmin(){
-  localStorage.removeItem('bp_admin');
+  localStorage.removeItem('bp_admin'); localStorage.removeItem('bp_admin_uid');
   toast('관리자 모드 해제됨');
   render();
 }
@@ -205,12 +219,13 @@ function openAdminPrompt(){
   `);
   document.getElementById('adminSubmit').addEventListener('click', async ()=>{
     const v = document.getElementById('adminKeyInput').value;
-    const hash = await sha256Hex(v);
-    if(hash === ADMIN_KEY_HASH){
+    if(!v){ toast('키를 입력해줘'); return; }
+    try{
+      await claimAdmin(v);
       localStorage.setItem('bp_admin','true');
       closeModal(); toast('관리자로 전환됨'); render();
-    } else {
-      toast('키가 맞지 않아');
+    }catch(e){
+      toast(e.code === 'no-auth' ? '로그인 토큰을 받지 못했어. 인터넷을 확인하고 다시 해줘' : '키가 맞지 않아');
     }
   });
 }
@@ -570,11 +585,17 @@ function renderSchedule(){
   }
   list.sort((a,b) => b[1].date.localeCompare(a[1].date)); // 최신순(내림차순)
 
+  const orphans = admin ? Object.entries(STATE.events).filter(([,e]) => !STATE.songs[e.songId]) : [];
   const pendingSync = admin ? participantDiffs(SCHEDULE_SONG_FILTER === 'all' ? null : SCHEDULE_SONG_FILTER).length : 0;
 
   view.innerHTML = `
     <div class="section-title">일정 관리 ${adminBadgeHtml()}</div>
     ${admin ? '' : `<div class="admin-lock">일정 추가/삭제는 관리자만 가능해. 참석 체크는 홈/달력에서 본인 이름으로 바로 가능함.</div>`}
+    ${orphans.length ? `
+      <div class="sync-banner">
+        <span>곡 목록에 없는 곡의 일정 ${orphans.length}개</span>
+        <button class="btn btn-danger btn-sm" id="cleanOrphans">확인하고 삭제</button>
+      </div>` : ''}
     ${pendingSync ? `
       <div class="sync-banner">
         <span>파트배정과 참여자가 다른 예정 일정 ${pendingSync}개</span>
@@ -604,6 +625,14 @@ function renderSchedule(){
   });
   document.querySelectorAll('#songPills .filter-pill, .song-overview-row').forEach(btn=>{
     btn.addEventListener('click', ()=>{ SCHEDULE_SONG_FILTER = btn.dataset.song; renderSchedule(); });
+  });
+  const cleanBtn = document.getElementById('cleanOrphans');
+  if(cleanBtn) cleanBtn.addEventListener('click', async ()=>{
+    const names = [...new Set(orphans.map(([,e]) => e.songId))].join(', ');
+    const dates = orphans.map(([,e]) => e.date).sort().join(', ');
+    if(!confirm(`곡 목록에 없는 곡(${names})의 일정 ${orphans.length}개를 삭제할까?\n${dates}\n삭제하면 되돌릴 수 없어.`)) return;
+    for(const [k] of orphans){ await dbRemove(`events/${k}`); delete STATE.events[k]; }
+    toast(`${orphans.length}개 삭제됨`); render();
   });
   const syncBtn = document.getElementById('openSync');
   if(syncBtn) syncBtn.addEventListener('click', ()=> openParticipantSyncModal(SCHEDULE_SONG_FILTER === 'all' ? null : SCHEDULE_SONG_FILTER));
@@ -787,6 +816,10 @@ function renderSongsSection(container, admin){
         if(!confirm(`"${title}" 곡을 삭제할까? (기존 일정 데이터는 남아있음)`)) return;
         await dbRemove(`songs/${encodeURIComponent(title)}`);
         delete STATE.songs[title];
+        const mine = Object.keys(STATE.events).filter(k => STATE.events[k].songId === title);
+        if(mine.length && confirm(`"${title}"이 들어간 일정 ${mine.length}개도 함께 삭제할까?\n(취소하면 일정은 남아있음)`)){
+          for(const k of mine){ await dbRemove(`events/${k}`); delete STATE.events[k]; }
+        }
         toast('삭제됨'); render();
       });
     }
@@ -993,6 +1026,7 @@ async function init(){
   window.addEventListener('hashchange', render);
 
   try{
+    await verifyAdminUid();
     await loadAll();
   }catch(err){
     document.getElementById('view').innerHTML = `<div class="empty-state">데이터를 불러오지 못했어. Firebase 설정(config.js)이나 네트워크를 확인해줘.<br>${escapeHtml(err.message)}</div>`;

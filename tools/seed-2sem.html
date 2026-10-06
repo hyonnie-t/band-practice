@@ -73,12 +73,12 @@
     const SEED_EVENTS = [
       ['2026-08-26','오리날다'], ['2026-08-27','너에게 닿기를'],
       ['2026-09-03','그라데이션'], ['2026-09-10','나에게로 떠나는 여행'],
-      ['2026-09-16','오리날다'], ['2026-09-17','타임캡슐'],
+      ['2026-09-16','오리날다'],
       ['2026-10-01','너에게 닿기를'], ['2026-10-15','그라데이션'],
       ['2026-10-21','오리날다'], ['2026-10-22','나에게로 떠나는 여행'],
-      ['2026-11-05','타임캡슐'], ['2026-11-11','너에게 닿기를'],
+      ['2026-11-11','너에게 닿기를'],
       ['2026-11-25','오리날다'], ['2026-11-26','그라데이션'],
-      ['2026-12-03','나에게로 떠나는 여행'], ['2026-12-10','타임캡슐'],
+      ['2026-12-03','나에게로 떠나는 여행'],
     ];
 
     // type은 CAL_TYPE_LABEL(holiday/exam/discretionary/club) 4종 중 하나거나,
@@ -123,8 +123,8 @@
     document.getElementById('runBtn').addEventListener('click', async ()=>{
       const runBtn = document.getElementById('runBtn');
       const key = document.getElementById('keyInput').value;
-      const hash = await sha256Hex(key);
-      if(hash !== ADMIN_KEY_HASH){ log('관리자 키가 맞지 않아. 다시 확인해줘.', 'err'); return; }
+      try{ await claimAdmin(key); }
+      catch(e){ log('관리자 키가 맞지 않거나 로그인 토큰을 받지 못했어. 다시 확인해줘.', 'err'); return; }
 
       runBtn.disabled = true;
       logRoot.innerHTML = '';
