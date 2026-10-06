@@ -585,7 +585,8 @@ function renderSchedule(){
   }
   list.sort((a,b) => b[1].date.localeCompare(a[1].date)); // 최신순(내림차순)
 
-  const orphans = admin ? Object.entries(STATE.events).filter(([,e]) => !STATE.songs[e.songId]) : [];
+  // 지난 일정은 실제 연습 기록이라 남기고, 오늘 이후 일정만 정리 대상으로 삼는다.
+  const orphans = admin ? Object.entries(STATE.events).filter(([,e]) => !STATE.songs[e.songId] && e.date >= todayISO()) : [];
   const pendingSync = admin ? participantDiffs(SCHEDULE_SONG_FILTER === 'all' ? null : SCHEDULE_SONG_FILTER).length : 0;
 
   view.innerHTML = `
@@ -593,7 +594,7 @@ function renderSchedule(){
     ${admin ? '' : `<div class="admin-lock">일정 추가/삭제는 관리자만 가능해. 참석 체크는 홈/달력에서 본인 이름으로 바로 가능함.</div>`}
     ${orphans.length ? `
       <div class="sync-banner">
-        <span>곡 목록에 없는 곡의 일정 ${orphans.length}개</span>
+        <span>곡 목록에 없는 곡의 예정 일정 ${orphans.length}개</span>
         <button class="btn btn-danger btn-sm" id="cleanOrphans">확인하고 삭제</button>
       </div>` : ''}
     ${pendingSync ? `
@@ -630,7 +631,7 @@ function renderSchedule(){
   if(cleanBtn) cleanBtn.addEventListener('click', async ()=>{
     const names = [...new Set(orphans.map(([,e]) => e.songId))].join(', ');
     const dates = orphans.map(([,e]) => e.date).sort().join(', ');
-    if(!confirm(`곡 목록에 없는 곡(${names})의 일정 ${orphans.length}개를 삭제할까?\n${dates}\n삭제하면 되돌릴 수 없어.`)) return;
+    if(!confirm(`곡 목록에 없는 곡(${names})의 오늘 이후 일정 ${orphans.length}개를 삭제할까?\n${dates}\n지난 일정은 남아 있어. 삭제하면 되돌릴 수 없어.`)) return;
     for(const [k] of orphans){ await dbRemove(`events/${k}`); delete STATE.events[k]; }
     toast(`${orphans.length}개 삭제됨`); render();
   });
@@ -816,8 +817,8 @@ function renderSongsSection(container, admin){
         if(!confirm(`"${title}" 곡을 삭제할까? (기존 일정 데이터는 남아있음)`)) return;
         await dbRemove(`songs/${encodeURIComponent(title)}`);
         delete STATE.songs[title];
-        const mine = Object.keys(STATE.events).filter(k => STATE.events[k].songId === title);
-        if(mine.length && confirm(`"${title}"이 들어간 일정 ${mine.length}개도 함께 삭제할까?\n(취소하면 일정은 남아있음)`)){
+        const mine = Object.keys(STATE.events).filter(k => STATE.events[k].songId === title && STATE.events[k].date >= todayISO());
+        if(mine.length && confirm(`"${title}"이 들어간 오늘 이후 일정 ${mine.length}개도 함께 삭제할까?\n(지난 일정은 남아 있어. 취소하면 예정 일정도 남음)`)){
           for(const k of mine){ await dbRemove(`events/${k}`); delete STATE.events[k]; }
         }
         toast('삭제됨'); render();
